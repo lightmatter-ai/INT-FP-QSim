@@ -29,8 +29,8 @@ from evaluate import load
 from tqdm import tqdm
 from transformers import CodeGenForCausalLM, CodeGenTokenizerFast
 
-from simulator.formats import E4M3, FP16
-from simulator.replace import replace_layers
+from int_fp_qsim.formats import E4M3, FP16
+from int_fp_qsim.replace import replace_layers
 
 # Used to enable running the generated code on system
 os.environ["HF_ALLOW_CODE_EVAL"] = "1"

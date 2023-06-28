@@ -32,8 +32,8 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoImageProcessor, MaskFormerForInstanceSegmentation
 
-from simulator.formats import E4M3, FP16
-from simulator.replace import replace_layers
+from int_fp_qsim.formats import E4M3, FP16
+from int_fp_qsim.replace import replace_layers
 
 # create an argument parser that takes in the number of epochs to train, batch size, and learning rate
 parser = argparse.ArgumentParser()

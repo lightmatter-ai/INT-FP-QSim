@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from functools import partial
 
 from qtorch import FloatingPoint
@@ -33,3 +34,6 @@ E2M1 = partial(quantize_to_fp, mantissa_bits=1, exponent_bits=2)
 # Based on TensorRT - https://github.com/NVIDIA/TensorRT
 INT8 = partial(quantize_to_int, num_bits=8)
 INT4 = partial(quantize_to_int, num_bits=4)
+
+# Using Pytorch native types
+BF16 = lambda x: x.to(torch.bfloat16).float()

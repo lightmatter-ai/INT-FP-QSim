@@ -32,8 +32,8 @@ from PIL import Image
 from torchmetrics.functional.multimodal import clip_score
 from transformers import CLIPTokenizer
 
-from simulator.formats import E4M3, FP16
-from simulator.replace import replace_layers
+from int_fp_qsim.formats import E4M3, FP16
+from int_fp_qsim.replace import replace_layers
 
 # Attention implementations vary across versions
 assert transformers.__version__ == "4.27.4"

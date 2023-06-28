@@ -43,9 +43,9 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import send_example_telemetry
 from transformers.utils.versions import require_version
 
-from simulator.formats import FP16, E4M3
-from simulator.replace import replace_layers
-from simulator.static_calib import calibrate_inputs, calibrate_weights
+from int_fp_qsim.formats import E4M3, FP16
+from int_fp_qsim.replace import replace_layers
+from int_fp_qsim.static_calib import calibrate_inputs, calibrate_weights
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 # check_min_version("4.26.0.dev0")
@@ -157,11 +157,7 @@ class ModelArguments:
     )
     do_FP8_eval: bool = field(
         default=False,
-        metadata={
-            "help": (
-                "Perform FP8 evaluation of the model"
-            )
-        },
+        metadata={"help": ("Perform FP8 evaluation of the model")},
     )
 
     def __post_init__(self):
@@ -601,7 +597,7 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
-    if model_args.do_FP8_eval:   
+    if model_args.do_FP8_eval:
         replace_layers(
             model,
             input_quantizer=E4M3,

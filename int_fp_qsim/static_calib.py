@@ -83,6 +83,24 @@ def calibrate_inputs(
     method="max",
     percentile=99.99,
 ):
+    """Perform static calibration of input activations.
+
+    Arguments:
+        model (torch.nn.Module): The model to be calibrated.
+        num_bits (int): Number of bits to use for quantization.
+        dataloader (torch.utils.data.DataLoader): Pytorch dataloader for
+            loading calibration data.
+        unsigned (bool): Use unsigned or signed quantization.
+        num_samples (int): Number of data batches to use for calibration.
+            These many data batches are retrieved from the dataloader.
+        batch_process_func (callable): A function that indicates how the
+            model should process each batch of data. By default, data is
+            passed as `model(data)` or `model(**data)`.
+        method (str): Calibration method to use: "max", "entropy", "MSE",
+            or "percentile".
+        percentile (float): Value of percentile to use if "percentile"
+            method specified for calibration.
+    """
     # Attach histogram data collectors
     input_histograms, handles = _attach_histogram_calibrators(model, num_bits, unsigned)
 
@@ -119,6 +137,20 @@ def calibrate_weights(
     percentile=99.99,
     num_bins=2048,
 ):
+    """Perform static calibration of weights.
+
+    Arguments:
+        model (torch.nn.Module): The model to be calibrated.
+        num_bits (int): Number of bits to use for quantization.
+        unsigned (bool): Use unsigned or signed quantization.
+        method (str): Calibration method to use: "max", "entropy", "MSE",
+            or "percentile".
+        perchannel (bool): Whether to calibrate on per-tensor (if False),
+            or perchannel basis (if set to True).
+        percentile (float): Value of percentile to use if "percentile"
+            method specified for calibration.
+        num_bins (int): Number of histogram bins to use for calibration.
+    """
     # Static calibration can be done on the replaced or unreplaced model.
     # Since layer types are different for both, using layer names
     # reconciles the difference.

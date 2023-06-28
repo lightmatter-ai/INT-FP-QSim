@@ -86,8 +86,7 @@ def quantize_to_int(
 
 
 class FPQuantFunction(torch.autograd.Function):
-    """Defining backward pass for QAT with quantize_to_fp.
-    """
+    """Defining backward pass for QAT with quantize_to_fp."""
 
     @staticmethod
     def forward(ctx, x, scales):

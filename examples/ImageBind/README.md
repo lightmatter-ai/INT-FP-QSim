@@ -1,0 +1,3 @@
+## Running ImageBind evaluation
+
+**NOTE:** To run ImageBind, please copy the `eval_imagebind.py` and `eval_imagebind.sh` files to the root of original ImageBind directory cloned from [here](https://github.com/facebookresearch/ImageBind) (the script needs the `models` and `bpe` directories from the original repo). Additional requirements, model checkpoint, and details are also provided in their original repository.

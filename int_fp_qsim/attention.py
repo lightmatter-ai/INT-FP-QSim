@@ -989,7 +989,12 @@ class MultiheadAttention(torch.nn.MultiheadAttention, QuantMixin):
         )
 
         if add_bias_kv:
-            raise NotImplementedError("kv bias not implemented")
+            self.bias_k = torch.nn.Parameter(
+                torch.empty((1, 1, embed_dim), **factory_kwargs)
+            )
+            self.bias_v = torch.nn.Parameter(
+                torch.empty((1, 1, embed_dim), **factory_kwargs)
+            )
         else:
             self.bias_k = self.bias_v = None
 
@@ -1006,69 +1011,169 @@ class MultiheadAttention(torch.nn.MultiheadAttention, QuantMixin):
         attn_mask=None,
         average_attn_weights=True,
     ):
-        if query is key and key is value:
-            batch_sz, seq_len, _ = query.shape
-            q_query = self._quantize_input(query)
-            q_in_proj_weight = self._quantize_weight(self.in_proj_weight)
-            qkv = torch.matmul(q_query, q_in_proj_weight.t())
-            qkv = self._quantize_output(qkv)
-            if self.training:
-                qkv_plus_b = (
-                    torch.add(qkv, self.in_proj_bias)
-                    if self.in_proj_bias is not None
-                    else qkv
-                )
-
-                def rearrange(t):
-                    t = t.reshape(batch_sz, seq_len, self.num_heads, self.head_dim)
-                    return t.permute(0, 2, 1, 3)
-
-                q, k, v = map(rearrange, qkv_plus_b.chunk(3, dim=-1))
-                kt = k.transpose(-1, -2)
-                q_q = self._quantize_input(q)
-                q_kt = self._quantize_input(kt)
-                qkt = torch.matmul(q_q, q_kt)
-                qkt = self._quantize_output(qkt)
-
-                qkt = qkt * (self.head_dim**-0.5)
-            else:
-                # Fuses bias addition and rescaling with the transformation of matrix dims
-                # used only in fast path
-                q, k, v = torch._transform_bias_rescale_qkv(
-                    qkv, self.in_proj_bias, self.num_heads
-                )
-                kt = k.transpose(-1, -2)
-
-                q_q = self._quantize_input(q)
-                q_kt = self._quantize_input(kt)
-                qkt = torch.matmul(q_q, q_kt)
-                qkt = self._quantize_output(qkt)
-
-            qkt = self.softmax(qkt)
-            qkt = self.dropout_layer(qkt)
-
-            q_qkt = self._quantize_input(qkt)
-            q_v = self._quantize_input(v)
-            attn_ctx = torch.matmul(q_qkt, q_v)
-            attn_ctx = self._quantize_output(attn_ctx)
-
-            # bhtd -> bt(hd)
-            transform_02_13 = attn_ctx.permute(0, 2, 1, 3).reshape(
-                batch_sz, seq_len, self.num_heads * self.head_dim
-            )
-
-            # final_out
-            out = self.out_proj(transform_02_13)
-            if need_weights:
-                if average_attn_weights:
-                    qkt = qkt.sum(dim=1)
-                    qkt = qkt / self.num_heads
-                    return out, qkt
-                else:
-                    return out, qkt
-            return out, None
+        # Based on Pytorch MultiheadAttention implementation
+        if query is not key or query is not value:
+            raise ValueError("MultiheadAttention only implemented for q=k=v")
         else:
-            raise NotImplementedError("only supports the case q=k=v")
+            if self.batch_first:
+                query = key = value = query.transpose(1, 0)
+
+        # set up shape vars
+        tgt_len, bsz, embed_dim = query.shape
+        src_len, _, _ = key.shape
+        if isinstance(embed_dim, torch.Tensor):
+            # embed_dim can be a tensor when JIT tracing
+            head_dim = embed_dim.div(self.num_heads, rounding_mode="trunc")
+        else:
+            head_dim = embed_dim // self.num_heads
+        assert (
+            head_dim * self.num_heads == embed_dim
+        ), f"embed_dim {embed_dim} not divisible by num_heads {num_heads}"
+        #
+        # compute in-projection
+        #
+        q_query = self.input_quantizer(query)
+        q_weight = self.weight_quantizer(self.in_proj_weight)
+        qkv = torch.matmul(q_query, q_weight.t()) + self.in_proj_bias
+        qkv = self.output_quantizer(qkv)
+        q, k, v = qkv.chunk(3, dim=-1)
+
+        # prep attention mask
+        if attn_mask is not None:
+            # ensure attn_mask's dim is 3
+            if attn_mask.dim() == 2:
+                correct_2d_size = (tgt_len, src_len)
+                if attn_mask.shape != correct_2d_size:
+                    raise RuntimeError(
+                        f"The shape of the 2D attn_mask is {attn_mask.shape}, but should be {correct_2d_size}."
+                    )
+                attn_mask = attn_mask.unsqueeze(0)
+            elif attn_mask.dim() == 3:
+                correct_3d_size = (bsz * self.num_heads, tgt_len, src_len)
+                if attn_mask.shape != correct_3d_size:
+                    raise RuntimeError(
+                        f"The shape of the 3D attn_mask is {attn_mask.shape}, but should be {correct_3d_size}."
+                    )
+            else:
+                raise RuntimeError(
+                    f"attn_mask's dimension {attn_mask.dim()} is not supported"
+                )
+
+        # add bias along batch dimension (currently second)
+        if self.bias_k is not None and self.bias_v is not None:
+            k = torch.cat([k, self.bias_k.repeat(1, bsz, 1)])
+            v = torch.cat([v, self.bias_v.repeat(1, bsz, 1)])
+            if attn_mask is not None:
+                attn_mask = torch.nn.functional.pad(attn_mask, (0, 1))
+            if key_padding_mask is not None:
+                key_padding_mask = torch.nn.functional.pad(key_padding_mask, (0, 1))
+        else:
+            assert self.bias_k is None
+            assert self.bias_v is None
+
+        #
+        # reshape q, k, v for multihead attention and make em batch first
+        #
+        q = q.contiguous().view(tgt_len, bsz * self.num_heads, head_dim).transpose(0, 1)
+        k = (
+            k.contiguous()
+            .view(k.shape[0], bsz * self.num_heads, head_dim)
+            .transpose(0, 1)
+        )
+        v = (
+            v.contiguous()
+            .view(v.shape[0], bsz * self.num_heads, head_dim)
+            .transpose(0, 1)
+        )
+
+        # add zero attention along batch dimension (now first)
+        if self.add_zero_attn:
+            zero_attn_shape = (bsz * self.num_heads, 1, head_dim)
+            k = torch.cat(
+                [k, torch.zeros(zero_attn_shape, dtype=k.dtype, device=k.device)], dim=1
+            )
+            v = torch.cat(
+                [v, torch.zeros(zero_attn_shape, dtype=v.dtype, device=v.device)], dim=1
+            )
+            if attn_mask is not None:
+                attn_mask = torch.nn.functional.pad(attn_mask, (0, 1))
+            if key_padding_mask is not None:
+                key_padding_mask = torch.nn.functional.pad(key_padding_mask, (0, 1))
+
+        # update source sequence length after adjustments
+        src_len = k.size(1)
+
+        # merge key padding and attention masks
+        if key_padding_mask is not None:
+            assert key_padding_mask.shape == (
+                bsz,
+                src_len,
+            ), f"expecting key_padding_mask shape of {(bsz, src_len)}, but got {key_padding_mask.shape}"
+            key_padding_mask = (
+                key_padding_mask.view(bsz, 1, 1, src_len)
+                .expand(-1, self.num_heads, -1, -1)
+                .reshape(bsz * self.num_heads, 1, src_len)
+            )
+            if attn_mask is None:
+                attn_mask = key_padding_mask
+            elif attn_mask.dtype == torch.bool:
+                attn_mask = attn_mask.logical_or(key_padding_mask)
+            else:
+                attn_mask = attn_mask.masked_fill(key_padding_mask, float("-inf"))
+
+        # convert mask to float
+        if attn_mask is not None and attn_mask.dtype == torch.bool:
+            new_attn_mask = torch.zeros_like(attn_mask, dtype=q.dtype)
+            new_attn_mask.masked_fill_(attn_mask, float("-inf"))
+            attn_mask = new_attn_mask
+
+        # adjust dropout probability
+        if not self.training:
+            dropout_p = 0.0
+        #
+        # (deep breath) calculate attention and out projection
+        #
+        B, Nt, E = q.shape
+        q_scaled = q / math.sqrt(E)
+
+        q_q_scaled = self.input_quantizer(q_scaled)
+        q_k = self.input_quantizer(k)
+
+        if attn_mask is not None:
+            attn_output_weights = torch.baddbmm(
+                attn_mask, q_q_scaled, q_k.transpose(-2, -1)
+            )
+        else:
+            attn_output_weights = torch.bmm(q_q_scaled, q_k.transpose(-2, -1))
+        attn_output_weights = self.output_quantizer(attn_output_weights)
+        attn_output_weights = self.softmax(attn_output_weights)
+        if dropout_p > 0.0:
+            attn_output_weights = self.dropout_layer(attn_output_weights, p=dropout_p)
+
+        q_attn_output_weights = self.input_quantizer(attn_output_weights)
+        q_v = self.input_quantizer(v)
+        attn_output = torch.bmm(q_attn_output_weights, q_v)
+        attn_output = self.output_quantizer(attn_output)
+
+        attn_output = (
+            attn_output.transpose(0, 1).contiguous().view(tgt_len * bsz, embed_dim)
+        )
+        attn_output = self.out_proj(attn_output)
+        attn_output = attn_output.view(tgt_len, bsz, attn_output.size(1))
+
+        if self.batch_first:
+            attn_output = attn_output.transpose(1, 0)
+
+        if need_weights:
+            # optionally average attention weights over heads
+            attn_output_weights = attn_output_weights.view(
+                bsz, self.num_heads, tgt_len, src_len
+            )
+            if average_attn_weights:
+                attn_output_weights = attn_output_weights.sum(dim=1) / self.num_heads
+            return attn_output, attn_output_weights
+        else:
+            return attn_output, None
 
     @classmethod
     def from_float(cls, mod):
@@ -1080,7 +1185,9 @@ class MultiheadAttention(torch.nn.MultiheadAttention, QuantMixin):
             output_quantizer=mod.output_quantizer,
             dropout=mod.dropout,
             bias=True if mod.in_proj_bias is not None else False,
-            add_bias_kv=True if mod.bias_k and mod.bias_v is not None else False,
+            add_bias_kv=True
+            if mod.bias_k is not None and mod.bias_v is not None
+            else False,
             add_zero_attn=mod.add_zero_attn,
             kdim=mod.kdim,
             vdim=mod.vdim,
@@ -1094,6 +1201,8 @@ class MultiheadAttention(torch.nn.MultiheadAttention, QuantMixin):
         assign_param(qattn.out_proj, mod.out_proj, "bias")
         assign_param(qattn, mod, "in_proj_weight")
         assign_param(qattn, mod, "in_proj_bias")
+        assign_param(qattn, mod, "bias_k")
+        assign_param(qattn, mod, "bias_v")
 
         if mod.training:
             qattn.train()
@@ -1103,6 +1212,11 @@ class MultiheadAttention(torch.nn.MultiheadAttention, QuantMixin):
 
     def extra_repr(self):
         return ", ".join((super().extra_repr(), extra_repr(self)))
+
+
+class ImageBindMha(MultiheadAttention):
+    def forward(self, x, attn_mask):
+        return super().forward(x, x, x, attn_mask=attn_mask, need_weights=False)[0]
 
 
 class CodeGenAttention(cg.CodeGenAttention, QuantMixin):
