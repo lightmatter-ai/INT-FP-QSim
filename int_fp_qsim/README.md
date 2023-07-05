@@ -5,7 +5,7 @@ INT-FP-QSim provides the following functionality:
 1. Modified implementations of various attention, linear and convolutional layers that utilize the flexible quantization functions of this repo (see `layers.py` and `attention.py`). 
 2. Support for static calibration strategies with floating point representation (see `static_calib.py`).
 3. Support for performing Quantization-aware-training for accuracy recovery with both integer and floating point formats (See `formats.py`).
-4. Example scripts for running evaluation with Codegen, Maskformer, Stable Diffusion, ImageBind, and OPT. (See `examples` folder in root)
+4. Example scripts for running evaluation with Codegen, Maskformer, Stable Diffusion, ImageBind, Graphormer, and OPT. (See `examples` folder in root)
 
 **NOTE:** *Currently supported model layers for running in this simulator include: Linear, Conv1d, Conv2d, ConvTranspose2d, MultiheadAttention, OPTAttention, BERTSelfAttention, DetrAttention, MaskformerSwinSelfAttention, Attention (cross-attention for stable diffusion) and CodeGenAttention. The simulator uses modified implementations of these layers to support flexible precision (See `attention.py` and `layers.py`).*
 
