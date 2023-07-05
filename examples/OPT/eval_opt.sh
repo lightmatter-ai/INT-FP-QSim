@@ -1,9 +1,8 @@
-MODEL_NAME=Aalaa/opt-125m-finetuned-wikitext2
-#MODEL_NAME=lnair/opt-350m-wikitext2
+MODEL_NAME=lnair/opt-350m-wikitext2
 #MODEL_NAME=lnair/opt-1.3b-wikitext2
 #MODEL_NAME=lnair/opt-2.7b-wikitext2
 
-CUDA_VISIBLE_DEVICES=0 python -u eval_opt.py \
+python -u eval_opt.py \
     --model_name_or_path $MODEL_NAME \
     --dataset_name wikitext \
     --dataset_config_name wikitext-2-raw-v1 \
