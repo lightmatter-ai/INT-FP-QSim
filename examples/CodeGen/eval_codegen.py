@@ -33,8 +33,9 @@ from int_fp_qsim.formats import E4M3, FP16
 from int_fp_qsim.replace import replace_layers
 
 # Used to enable running the generated code on system
-os.environ["HF_ALLOW_CODE_EVAL"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# Uncomment the following to allow running code on the system
+#os.environ["HF_ALLOW_CODE_EVAL"] = "1"
+#os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 # Attention implementations vary across versions

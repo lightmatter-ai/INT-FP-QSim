@@ -1,8 +1,20 @@
 # INT-FP-QSim
 INT-FP-QSim is a simulator that supports flexible evaluation of large language models (LLMs) and Vision Transformers for different numerical precisions, formats (integer or floating point) and their combinations. Please see [ADD LINK] for further details on the simulator and the results obtained for different models. INT-FP-QSim is intended for research purposes only.
 
-## Installation
-The package can be installed with `pip install -e .` from within the directory of the cloned repo.
+## Setup
+
+### Prerequisites
+INT-FP-QSim requires PyTorch.
+
+As there are multiple installation options for PyTorch, we advise to follow [their installation directions](https://pytorch.org/get-started/locally/).
+We also advise to use the `--index-url` option when installing PyTorch so the particular CUDA or CPU version is installed.
+
+We have tested the repo using **PyTorch 1.13.0, CUDA 11.6 or CPU versions**.
+This can be installed with: 
+```pip install torch==1.13.0+cu116 torchvision==0.14.0+cu116 -f https://download.pytorch.org/whl/torch_stable.html```
+
+### Installation
+INT-FP-QSim can be installed with `pip install -e .` from within the directory of the cloned repo.
 
 ### Quickstart: Running Resnet50 E4M3 quantization with the simulator
 ```

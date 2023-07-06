@@ -1,7 +1,7 @@
 MODEL_DIR=CompVis/stable-diffusion-v1-4
 CLIP_MODEL=openai/clip-vit-base-patch16
 
-python -u eval_sd.py \
+python -u eval_stablediff.py \
     --model-name-or-path $MODEL_DIR \
     --clip-model-name-or-path $CLIP_MODEL \
     --dataset-name-or-path conceptual_captions \

@@ -10,5 +10,6 @@ python -u eval_opt.py \
     --per_device_eval_batch_size 2 \
     --seed 42 \
     --output_dir ./tmp/test-clm \
+    --do_eval \
     --do_FP8_eval
     #--block_size 256
