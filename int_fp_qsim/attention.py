@@ -32,7 +32,6 @@ except ImportError:
     from transformers.modeling_bert import BertConfig
 
 import transformers.models.codegen.modeling_codegen as cg
-import transformers.models.graphormer.modeling_graphormer as gf
 import transformers.models.maskformer.modeling_maskformer as mf
 import transformers.models.maskformer.modeling_maskformer_swin as mfswin
 from transformers.models.codegen.configuration_codegen import CodeGenConfig
@@ -1785,7 +1784,7 @@ class GraphormerMultiheadAttention(torch.nn.Module, QuantMixin):
         q_q = self.input_quantizer(q)
         q_k = self.input_quantizer(k)
         attn_weights = torch.bmm(q_q, q_k.transpose(1, 2))
-        attn_weights = self.input_quantizer(attn_weights)
+        attn_weights = self.output_quantizer(attn_weights)
 
         attn_weights = self.apply_sparse_mask(attn_weights, tgt_len, src_len, bsz)
 
