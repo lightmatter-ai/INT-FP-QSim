@@ -32,6 +32,7 @@ except ImportError:
     from transformers.modeling_bert import BertConfig
 
 import transformers.models.codegen.modeling_codegen as cg
+import transformers.models.graphormer.modeling_graphormer as gf
 import transformers.models.maskformer.modeling_maskformer as mf
 import transformers.models.maskformer.modeling_maskformer_swin as mfswin
 from transformers.models.codegen.configuration_codegen import CodeGenConfig
@@ -1605,3 +1606,271 @@ class Attention:
         )
         mod.get_attention_scores = qattn.get_attention_scores
         return mod
+
+
+class GraphormerMultiheadAttention(torch.nn.Module, QuantMixin):
+    """Multi-headed attention.
+
+    See "Attention Is All You Need" for more details.
+    """
+
+    def __init__(
+        self,
+        embedding_dim,
+        num_attention_heads,
+        input_quantizer,
+        weight_quantizer,
+        output_quantizer,
+        kdim=None,
+        vdim=None,
+        dropout=0.0,
+        bias=True,
+        amax_input=None,
+        amax_weight=None,
+    ):
+        super().__init__()
+        self.init_quantizer(
+            input_quantizer, weight_quantizer, output_quantizer, amax_input, amax_weight
+        )
+        self.embedding_dim = embedding_dim
+        self.kdim = kdim if kdim is not None else embedding_dim
+        self.vdim = vdim if vdim is not None else embedding_dim
+        self.qkv_same_dim = self.kdim == embedding_dim and self.vdim == embedding_dim
+
+        self.num_heads = num_attention_heads
+        self.dropout_module = torch.nn.Dropout(p=dropout, inplace=False)
+
+        self.head_dim = embedding_dim // num_attention_heads
+        if not (self.head_dim * num_attention_heads == self.embedding_dim):
+            raise AssertionError("The embedding_dim must be divisible by num_heads.")
+        self.scaling = self.head_dim**-0.5
+
+        self.self_attention = True  # config.self_attention
+        if not (self.self_attention):
+            raise NotImplementedError(
+                "The Graphormer model only supports self attention for now."
+            )
+        if self.self_attention and not self.qkv_same_dim:
+            raise AssertionError(
+                "Self-attention requires query, key and value to be of the same size."
+            )
+
+        self.k_proj = Linear(
+            self.kdim,
+            embedding_dim,
+            input_quantizer,
+            weight_quantizer,
+            output_quantizer,
+            bias=bias,
+        )
+        self.v_proj = Linear(
+            self.vdim,
+            embedding_dim,
+            input_quantizer,
+            weight_quantizer,
+            output_quantizer,
+            bias=bias,
+        )
+        self.q_proj = Linear(
+            embedding_dim,
+            embedding_dim,
+            input_quantizer,
+            weight_quantizer,
+            output_quantizer,
+            bias=bias,
+        )
+        self.out_proj = Linear(
+            embedding_dim,
+            embedding_dim,
+            input_quantizer,
+            weight_quantizer,
+            output_quantizer,
+            bias=bias,
+        )
+        self.onnx_trace = False
+
+    def forward(
+        self,
+        query,
+        key,
+        value,
+        attn_bias,
+        key_padding_mask=None,
+        need_weights=True,
+        attn_mask=None,
+        before_softmax=False,
+        need_head_weights=False,
+    ):
+        """
+        Args:
+            key_padding_mask (Bytetorch.Tensor, optional): mask to exclude
+                keys that are pads, of shape `(batch, src_len)`, where padding elements are indicated by 1s.
+            need_weights (bool, optional): return the attention weights,
+                averaged over heads (default: False).
+            attn_mask (Bytetorch.Tensor, optional): typically used to
+                implement causal attention, where the mask prevents the attention from looking forward in time
+                (default: None).
+            before_softmax (bool, optional): return the raw attention
+                weights and values before the attention softmax.
+            need_head_weights (bool, optional): return the attention
+                weights for each head. Implies *need_weights*. Default: return the average attention weights over all
+                heads.
+        """
+        if need_head_weights:
+            need_weights = True
+
+        tgt_len, bsz, embedding_dim = query.size()
+        src_len = tgt_len
+        if not (embedding_dim == self.embedding_dim):
+            raise AssertionError(
+                f"The query embedding dimension {embedding_dim} is not equal to the expected embedding_dim"
+                f" {self.embedding_dim}."
+            )
+        if not (list(query.size()) == [tgt_len, bsz, embedding_dim]):
+            raise AssertionError(
+                "Query size incorrect in Graphormer, compared to model dimensions."
+            )
+
+        if key is not None:
+            src_len, key_bsz, _ = key.size()
+            if not torch.jit.is_scripting():
+                if (
+                    (key_bsz != bsz)
+                    or (value is None)
+                    or not (src_len, bsz == value.shape[:2])
+                ):
+                    raise AssertionError(
+                        "The batch shape does not match the key or value shapes provided to the attention."
+                    )
+
+        q = self.q_proj(query)
+        k = self.k_proj(query)
+        v = self.v_proj(query)
+
+        q *= self.scaling
+
+        q = (
+            q.contiguous()
+            .view(tgt_len, bsz * self.num_heads, self.head_dim)
+            .transpose(0, 1)
+        )
+        if k is not None:
+            k = (
+                k.contiguous()
+                .view(-1, bsz * self.num_heads, self.head_dim)
+                .transpose(0, 1)
+            )
+        if v is not None:
+            v = (
+                v.contiguous()
+                .view(-1, bsz * self.num_heads, self.head_dim)
+                .transpose(0, 1)
+            )
+
+        if (k is None) or not (k.size(1) == src_len):
+            raise AssertionError(
+                "The shape of the key generated in the attention is incorrect"
+            )
+
+        # This is part of a workaround to get around fork/join parallelism
+        # not supporting Optional types.
+        if key_padding_mask is not None and key_padding_mask.dim() == 0:
+            key_padding_mask = None
+
+        if key_padding_mask is not None:
+            if key_padding_mask.size(0) != bsz or key_padding_mask.size(1) != src_len:
+                raise AssertionError(
+                    "The shape of the generated padding mask for the key does not match expected dimensions."
+                )
+        q_q = self.input_quantizer(q)
+        q_k = self.input_quantizer(k)
+        attn_weights = torch.bmm(q_q, q_k.transpose(1, 2))
+        attn_weights = self.input_quantizer(attn_weights)
+
+        attn_weights = self.apply_sparse_mask(attn_weights, tgt_len, src_len, bsz)
+
+        if list(attn_weights.size()) != [bsz * self.num_heads, tgt_len, src_len]:
+            raise AssertionError(
+                "The attention weights generated do not match the expected dimensions."
+            )
+
+        if attn_bias is not None:
+            attn_weights += attn_bias.view(bsz * self.num_heads, tgt_len, src_len)
+
+        if attn_mask is not None:
+            attn_mask = attn_mask.unsqueeze(0)
+            attn_weights += attn_mask
+
+        if key_padding_mask is not None:
+            # don't attend to padding symbols
+            attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+            attn_weights = attn_weights.masked_fill(
+                key_padding_mask.unsqueeze(1).unsqueeze(2).to(torch.bool), float("-inf")
+            )
+            attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+
+        if before_softmax:
+            return attn_weights, v
+
+        attn_weights_float = torch.nn.functional.softmax(attn_weights, dim=-1)
+        attn_weights = attn_weights_float.type_as(attn_weights)
+        attn_probs = self.dropout_module(attn_weights)
+
+        if v is None:
+            raise AssertionError("No value generated")
+        q_attn_probs = self.input_quantizer(attn_probs)
+        q_v = self.input_quantizer(v)
+        attn = torch.bmm(q_attn_probs, q_v)
+        attn = self.output_quantizer(attn)
+        if list(attn.size()) != [bsz * self.num_heads, tgt_len, self.head_dim]:
+            raise AssertionError(
+                "The attention generated do not match the expected dimensions."
+            )
+
+        attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embedding_dim)
+        attn: torch.Tensor = self.out_proj(attn)
+
+        attn_weights = None
+        if need_weights:
+            attn_weights = (
+                attn_weights_float.contiguous()
+                .view(bsz, self.num_heads, tgt_len, src_len)
+                .transpose(1, 0)
+            )
+            if not need_head_weights:
+                # average attention weights over heads
+                attn_weights = attn_weights.mean(dim=0)
+
+        return attn, attn_weights
+
+    def apply_sparse_mask(
+        self, attn_weights: torch.Tensor, tgt_len: int, src_len: int, bsz: int
+    ) -> torch.Tensor:
+        return attn_weights
+
+    @classmethod
+    def from_float(cls, mod):
+        qattn = cls(
+            embedding_dim=mod.embedding_dim,
+            num_attention_heads=mod.num_heads,
+            input_quantizer=mod.input_quantizer,
+            weight_quantizer=mod.weight_quantizer,
+            output_quantizer=mod.output_quantizer,
+            kdim=mod.kdim,
+            vdim=mod.vdim,
+            dropout=mod.dropout_module.p,
+            bias=True if mod.k_proj.bias is not None else False,
+            amax_input=mod.amax_input,
+            amax_weight=mod.amax_weight,
+        )
+        linear_names = ["q_proj", "k_proj", "v_proj", "out_proj"]
+        copy_linears_in_attn(qattn, mod, linear_names)
+
+        if mod.training:
+            qattn.train()
+        else:
+            qattn.eval()
+        return qattn
+
+    def extra_repr(self):
+        return ", ".join((super().extra_repr(), extra_repr(self)))

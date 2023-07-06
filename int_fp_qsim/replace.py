@@ -28,6 +28,7 @@ except ImportError:
 
 import diffusers.models.attention_processor as sd
 import transformers.models.codegen.modeling_codegen as cg
+import transformers.models.graphormer.modeling_graphormer as gp
 import transformers.models.maskformer.modeling_maskformer as mf
 import transformers.models.maskformer.modeling_maskformer_swin as mfswin
 
@@ -43,6 +44,7 @@ DEFAULT_MAPPING = {
     mfswin.MaskFormerSwinSelfAttention: MaskFormerSwinSelfAttention,
     cg.CodeGenAttention: CodeGenAttention,
     sd.Attention: Attention,
+    gp.GraphormerMultiheadAttention: GraphormerMultiheadAttention,
 }
 
 
