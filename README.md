@@ -1,5 +1,5 @@
 # INT-FP-QSim
-INT-FP-QSim is a simulator that supports flexible evaluation of large language models (LLMs) and Vision Transformers for different numerical precisions, formats (integer or floating point) and their combinations. Please see [ADD LINK] for further details on the simulator and the results obtained for different models. INT-FP-QSim is intended for research purposes only.
+INT-FP-QSim is a simulator that supports flexible evaluation of large language models (LLMs) and Vision Transformers for different numerical precisions, formats (integer or floating point) and their combinations. Please see [https://arxiv.org/abs/2307.03712](https://arxiv.org/abs/2307.03712) for further details on the simulator and the results obtained for different models. INT-FP-QSim is intended for research purposes only.
 
 ## Setup
 
@@ -53,5 +53,5 @@ This is not an officially supported Lightmatter product.
 ## Citing INT-FP-QSim
 If you find this repository useful, please consider giving it a star and citation:
 ```
-[ADD CITATION FOR PAPER]
+Nair, Lakshmi, et al. INT-FP-QSim: Mixed Precision and Formats For Large Language Models and Vision Transformers. arXiv, 7 July 2023. arXiv.org, https://doi.org/10.48550/arXiv.2307.03712.
 ```
